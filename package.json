@@ -7,6 +7,9 @@
     "test:resume-pdf": "node testResumePDF.js"
   },
   "dependencies": {
+    "dotenv": "^17.3.1",
+    "node-telegram-bot-api": "^0.67.0",
+    "pdf-parse": "^2.4.5",
     "puppeteer-core": "^24.6.1"
   }
 }

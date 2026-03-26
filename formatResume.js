@@ -1,27 +1,20 @@
 const fs = require("fs");
 const path = require("path");
 
-const SECTION_KEYWORDS = {
-  summary: ["summary", "profile", "objective", "about"],
-  skills: ["skills", "technical skills", "technologies", "expertise"],
-  experience: ["experience", "work experience", "employment", "professional experience"],
-  projects: ["projects", "personal projects", "academic projects"],
-};
-
-const SECTION_ORDER = ["summary", "skills", "experience", "projects"];
-const DEFAULT_TEMPLATE = "simple";
-const TEMPLATE_TYPES = new Set(["simple", "modern"]);
 const TEMP_DIR_NAME = "temp";
+const DEFAULT_TEMPLATE = "structured";
 const PDF_CONFIG = {
   format: "A4",
   printBackground: true,
+  preferCSSPageSize: true,
   margin: {
-    top: "20mm",
-    right: "15mm",
-    bottom: "20mm",
-    left: "15mm",
+    top: "10mm",
+    right: "10mm",
+    bottom: "10mm",
+    left: "10mm",
   },
 };
+
 const BROWSER_CANDIDATES = [
   process.env.PUPPETEER_EXECUTABLE_PATH,
   "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
@@ -30,128 +23,414 @@ const BROWSER_CANDIDATES = [
   "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
 ].filter(Boolean);
 
-const HEADING_PREFIX_PATTERN =
-  /^(summary|profile|objective|about|skills|technical skills|technologies|expertise|experience|work experience|employment|professional experience|projects|personal projects|academic projects)\s*[:\-]\s*/i;
+function normalizeResumeData(data) {
+  const input = data || {};
+  const contact = input.contact || {};
 
-const SIMPLE_THEME = {
-  pageBackground: "#ffffff",
-  pageText: "#16202a",
-  subText: "#334e68",
-  heading: "#102a43",
-  divider: "#d9e2ec",
-  headerDivider: "#243b53",
-  shellPadding: "44px 48px 40px",
-  contentWidth: "860px",
-};
-
-const MODERN_THEME = {
-  pageBackground: "#f4f7fb",
-  pageText: "#1f2933",
-  subText: "#486581",
-  heading: "#102a43",
-  divider: "#cbd2d9",
-  cardBorder: "#d9e2ec",
-  sidebarBackground: "#f8fbff",
-  shellPadding: "22px",
-  contentWidth: "980px",
-};
-
-function formatResume(resumeText) {
-  const lines = toLines(resumeText);
-  const resume = createEmptyResume();
-  let currentSection = null;
-
-  lines.forEach((line, index) => {
-    if (index === 0) {
-      resume.name = line;
-      return;
-    }
-
-    const detectedSection = detectSection(normalizeHeading(line));
-
-    if (detectedSection) {
-      currentSection = detectedSection;
-      return;
-    }
-
-    if (!currentSection) {
-      resume.summary = appendSentence(resume.summary, line);
-      return;
-    }
-
-    if (currentSection === "summary") {
-      resume.summary = appendSentence(resume.summary, line);
-      return;
-    }
-
-    if (currentSection === "skills") {
-      resume.skills.push(...splitItems(line));
-      return;
-    }
-
-    resume[currentSection].push(cleanBullet(line));
-  });
-
-  return resume;
+  return {
+    name: String(input.name || "").trim(),
+    contact: {
+      linkedin: String(contact.linkedin || "").trim(),
+      github: String(contact.github || "").trim(),
+      email: String(contact.email || "").trim(),
+      phone: String(contact.phone || "").trim(),
+    },
+    skills: normalizeSkills(input.skills),
+    projects: normalizeProjects(input.projects),
+    training: normalizeTraining(input.training),
+    certificates: normalizeStringList(input.certificates),
+    achievements: normalizeStringList(input.achievements),
+    education: normalizeEducation(input.education),
+  };
 }
 
-function generateHTMLResume(data) {
-  const resume = normalizeResumeData(data);
-  const sectionMarkup = [
-    renderParagraphSection("Summary", resume.summary, SIMPLE_THEME),
-    renderListSection("Skills", resume.skills, SIMPLE_THEME),
-    renderListSection("Experience", resume.experience, SIMPLE_THEME),
-    renderListSection("Projects", resume.projects, SIMPLE_THEME),
-  ]
-    .filter(Boolean)
-    .join("");
+function normalizeSkills(skills) {
+  const defaults = {
+    languages: [],
+    webTechnologies: [],
+    frameworksLibraries: [],
+    databaseMessaging: [],
+    toolsCloudDevOpsPlatforms: [],
+    coreCSFundamentals: [],
+    softSkills: [],
+  };
 
-  return wrapHtmlDocument({
-    title: resume.name || "Resume",
-    bodyStyle: `margin: 0; padding: 0; background-color: ${SIMPLE_THEME.pageBackground}; color: ${SIMPLE_THEME.pageText}; font-family: 'Helvetica Neue', Arial, sans-serif; line-height: 1.6;`,
-    content: `<div style="max-width: ${SIMPLE_THEME.contentWidth}; margin: 0 auto; padding: ${SIMPLE_THEME.shellPadding};">
-    <header style="margin-bottom: 30px; padding-bottom: 18px; border-bottom: 2px solid ${SIMPLE_THEME.headerDivider};">
-      <h1 style="margin: 0; font-size: 34px; font-weight: 700; letter-spacing: 0.01em; color: ${SIMPLE_THEME.heading};">${escapeHtml(resume.name)}</h1>
-    </header>
-    ${sectionMarkup}
-  </div>`,
-  });
+  if (!skills || typeof skills !== "object") {
+    return defaults;
+  }
+
+  return {
+    languages: normalizeStringList(skills.languages),
+    webTechnologies: normalizeStringList(skills.webTechnologies),
+    frameworksLibraries: normalizeStringList(skills.frameworksLibraries),
+    databaseMessaging: normalizeStringList(skills.databaseMessaging),
+    toolsCloudDevOpsPlatforms: normalizeStringList(skills.toolsCloudDevOpsPlatforms),
+    coreCSFundamentals: normalizeStringList(skills.coreCSFundamentals),
+    softSkills: normalizeStringList(skills.softSkills),
+  };
 }
 
-function generateModernHTMLResume(data) {
-  const resume = normalizeResumeData(data);
-  const contactItems = normalizeContact(resume.contact);
-  const sidebarMarkup = [
-    renderListSection("Contact", contactItems, MODERN_THEME, { indent: "18px", itemSpacing: "9px", headingSize: "15px" }),
-    renderListSection("Skills", resume.skills, MODERN_THEME, { headingSize: "15px" }),
-  ]
-    .filter(Boolean)
-    .join("");
-  const mainMarkup = [
-    renderListSection("Experience", resume.experience, MODERN_THEME, { headingSize: "15px" }),
-    renderListSection("Projects", resume.projects, MODERN_THEME, { headingSize: "15px" }),
-  ]
-    .filter(Boolean)
-    .join("");
+function normalizeProjects(projects) {
+  if (!Array.isArray(projects)) {
+    return [];
+  }
 
-  return wrapHtmlDocument({
-    title: resume.name || "Resume",
-    bodyStyle: `margin: 0; padding: ${MODERN_THEME.shellPadding}; background-color: ${MODERN_THEME.pageBackground}; color: ${MODERN_THEME.pageText}; font-family: 'Helvetica Neue', Arial, sans-serif; line-height: 1.6;`,
-    content: `<div style="max-width: ${MODERN_THEME.contentWidth}; margin: 0 auto; background-color: #ffffff; border: 1px solid ${MODERN_THEME.cardBorder};">
-    <header style="padding: 34px 38px 24px; border-bottom: 1px solid ${MODERN_THEME.divider}; background-color: #ffffff;">
-      <h1 style="margin: 0 0 10px; font-size: 34px; font-weight: 700; color: ${MODERN_THEME.heading}; letter-spacing: 0.01em;">${escapeHtml(resume.name)}</h1>
-      ${resume.summary ? `<p style="margin: 0; max-width: 700px; font-size: 15px; color: ${MODERN_THEME.subText};">${escapeHtml(resume.summary)}</p>` : ""}
-    </header>
-    <div style="display: table; width: 100%; table-layout: fixed;">
-      <aside style="display: table-cell; width: 31%; vertical-align: top; background-color: ${MODERN_THEME.sidebarBackground}; padding: 30px 24px 32px; border-right: 1px solid ${MODERN_THEME.cardBorder};">
-        ${sidebarMarkup}
-      </aside>
-      <main style="display: table-cell; width: 69%; vertical-align: top; padding: 30px 34px 32px;">
-        ${mainMarkup}
-      </main>
+  return projects
+    .map((project) => ({
+      title: String(project?.title || "").trim(),
+      liveLink: String(project?.liveLink || "").trim(),
+      date: String(project?.date || "").trim(),
+      bullets: normalizeStringList(project?.bullets),
+    }))
+    .filter((project) => project.title);
+}
+
+function normalizeTraining(training) {
+  if (!Array.isArray(training)) {
+    return [];
+  }
+
+  return training
+    .map((item) => ({
+      role: String(item?.role || "").trim(),
+      institute: String(item?.institute || "").trim(),
+      date: String(item?.date || "").trim(),
+      bullets: normalizeStringList(item?.bullets),
+    }))
+    .filter((item) => item.role || item.institute);
+}
+
+function normalizeEducation(education) {
+  if (!Array.isArray(education)) {
+    return [];
+  }
+
+  return education
+    .map((item) => ({
+      degree: String(item?.degree || "").trim(),
+      college: String(item?.college || "").trim(),
+      location: String(item?.location || "").trim(),
+      dates: String(item?.dates || "").trim(),
+    }))
+    .filter((item) => item.degree || item.college);
+}
+
+function normalizeStringList(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const seen = new Set();
+  return value
+    .map((item) => String(item || "").trim())
+    .filter((item) => {
+      if (!item) {
+        return false;
+      }
+
+      const key = item.toLowerCase();
+      if (seen.has(key)) {
+        return false;
+      }
+
+      seen.add(key);
+      return true;
+    });
+}
+
+function generateStructuredResumeHTML(data) {
+  const resume = normalizeResumeData(data);
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${escapeHtml(resume.name || "Resume")}</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 10mm;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: #111827;
+      background: #ffffff;
+      font-family: Helvetica, Arial, sans-serif;
+      font-size: 10.5pt;
+      line-height: 1.34;
+    }
+
+    .page {
+      width: 100%;
+      padding: 0;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+      margin-bottom: 12px;
+    }
+
+    .header-left,
+    .header-right {
+      width: 48%;
+    }
+
+    .header-right {
+      text-align: right;
+    }
+
+    .name {
+      margin: 0 0 6px;
+      font-size: 22pt;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+    }
+
+    .contact-line {
+      margin: 2px 0;
+      font-size: 9.8pt;
+    }
+
+    .section {
+      margin-top: 10px;
+      padding-top: 8px;
+      border-top: 1.5px solid #1f2937;
+    }
+
+    .section-title {
+      margin: 0 0 8px;
+      font-size: 11pt;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .skill-list,
+    .bullet-list {
+      margin: 0;
+      padding-left: 16px;
+    }
+
+    .skill-list li,
+    .bullet-list li {
+      margin: 0 0 4px;
+    }
+
+    .entry {
+      margin-bottom: 10px;
+    }
+
+    .entry:last-child {
+      margin-bottom: 0;
+    }
+
+    .entry-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 3px;
+    }
+
+    .entry-title {
+      font-weight: 700;
+    }
+
+    .entry-date,
+    .entry-location {
+      white-space: nowrap;
+      text-align: right;
+      font-size: 9.8pt;
+    }
+
+    .project-title-line {
+      display: flex;
+      align-items: baseline;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .live-link {
+      font-size: 9.5pt;
+      color: #1d4ed8;
+      text-decoration: none;
+    }
+
+    .edu-meta {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 1px;
+    }
+
+    .plain-list {
+      margin: 0;
+      padding-left: 16px;
+    }
+
+    .plain-list li {
+      margin-bottom: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    ${renderHeader(resume)}
+    ${renderSkillsSection(resume.skills)}
+    ${renderProjectsSection(resume.projects)}
+    ${renderTrainingSection(resume.training)}
+    ${renderSimpleBulletSection("CERTIFICATES", resume.certificates)}
+    ${renderSimpleBulletSection("ACHIEVEMENTS", resume.achievements)}
+    ${renderEducationSection(resume.education)}
+  </div>
+</body>
+</html>`;
+}
+
+function renderHeader(resume) {
+  return `<header class="header">
+    <div class="header-left">
+      <h1 class="name">${escapeHtml(resume.name)}</h1>
+      ${resume.contact.linkedin ? `<div class="contact-line">${escapeHtml(resume.contact.linkedin)}</div>` : ""}
+      ${resume.contact.github ? `<div class="contact-line">${escapeHtml(resume.contact.github)}</div>` : ""}
     </div>
-  </div>`,
-  });
+    <div class="header-right">
+      ${resume.contact.email ? `<div class="contact-line">${escapeHtml(resume.contact.email)}</div>` : ""}
+      ${resume.contact.phone ? `<div class="contact-line">${escapeHtml(resume.contact.phone)}</div>` : ""}
+    </div>
+  </header>`;
+}
+
+function renderSkillsSection(skills) {
+  const items = [
+    renderSkillCategory("Languages", skills.languages),
+    renderSkillCategory("Web Technologies", skills.webTechnologies),
+    renderSkillCategory("Frameworks & Libraries", skills.frameworksLibraries),
+    renderSkillCategory("Database & Messaging", skills.databaseMessaging),
+    renderSkillCategory("Tools, Cloud, DevOps & Platforms", skills.toolsCloudDevOpsPlatforms),
+    renderSkillCategory("Core CS Fundamentals", skills.coreCSFundamentals),
+    renderSkillCategory("Soft Skills", skills.softSkills),
+  ].filter(Boolean);
+
+  if (items.length === 0) {
+    return "";
+  }
+
+  return `<section class="section">
+    <h2 class="section-title">SKILLS</h2>
+    <ul class="skill-list">${items.join("")}</ul>
+  </section>`;
+}
+
+function renderSkillCategory(label, values) {
+  if (!values || values.length === 0) {
+    return "";
+  }
+
+  return `<li><strong>${escapeHtml(label)}:</strong> ${escapeHtml(values.join(", "))}</li>`;
+}
+
+function renderProjectsSection(projects) {
+  if (!projects.length) {
+    return "";
+  }
+
+  return `<section class="section">
+    <h2 class="section-title">PROJECT</h2>
+    ${projects.map(renderProjectEntry).join("")}
+  </section>`;
+}
+
+function renderProjectEntry(project) {
+  const bullets = project.bullets.length
+    ? `<ul class="bullet-list">${project.bullets.map(renderBullet).join("")}</ul>`
+    : "";
+
+  return `<div class="entry">
+    <div class="entry-head">
+      <div class="project-title-line">
+        <span class="entry-title">${escapeHtml(project.title)}</span>
+        ${project.liveLink ? `<a class="live-link" href="${escapeAttribute(project.liveLink)}">Live</a>` : ""}
+      </div>
+      ${project.date ? `<div class="entry-date">${escapeHtml(project.date)}</div>` : ""}
+    </div>
+    ${bullets}
+  </div>`;
+}
+
+function renderTrainingSection(training) {
+  if (!training.length) {
+    return "";
+  }
+
+  return `<section class="section">
+    <h2 class="section-title">TRAINING</h2>
+    ${training.map(renderTrainingEntry).join("")}
+  </section>`;
+}
+
+function renderTrainingEntry(item) {
+  const label = [item.role, item.institute].filter(Boolean).join(" — ");
+  const bullets = item.bullets.length
+    ? `<ul class="bullet-list">${item.bullets.map(renderBullet).join("")}</ul>`
+    : "";
+
+  return `<div class="entry">
+    <div class="entry-head">
+      <div class="entry-title">${escapeHtml(label)}</div>
+      ${item.date ? `<div class="entry-date">${escapeHtml(item.date)}</div>` : ""}
+    </div>
+    ${bullets}
+  </div>`;
+}
+
+function renderSimpleBulletSection(title, items) {
+  if (!items.length) {
+    return "";
+  }
+
+  return `<section class="section">
+    <h2 class="section-title">${escapeHtml(title)}</h2>
+    <ul class="plain-list">${items.map(renderBullet).join("")}</ul>
+  </section>`;
+}
+
+function renderEducationSection(education) {
+  if (!education.length) {
+    return "";
+  }
+
+  return `<section class="section">
+    <h2 class="section-title">EDUCATION</h2>
+    ${education.map(renderEducationEntry).join("")}
+  </section>`;
+}
+
+function renderEducationEntry(item) {
+  const label = [item.degree, item.college].filter(Boolean).join(" — ");
+
+  return `<div class="entry">
+    <div class="entry-head">
+      <div class="entry-title">${escapeHtml(label)}</div>
+      <div class="edu-meta">
+        ${item.location ? `<div class="entry-location">${escapeHtml(item.location)}</div>` : ""}
+        ${item.dates ? `<div class="entry-date">${escapeHtml(item.dates)}</div>` : ""}
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderBullet(text) {
+  return `<li>${escapeHtml(text)}</li>`;
 }
 
 async function generatePDF(htmlContent, options = {}) {
@@ -167,7 +446,10 @@ async function generatePDF(htmlContent, options = {}) {
   try {
     const page = await browser.newPage();
     page.setDefaultNavigationTimeout(60000);
-    await page.setContent(String(htmlContent || ""), { waitUntil: "load", timeout: 60000 });
+    await page.setContent(String(htmlContent || ""), {
+      waitUntil: "load",
+      timeout: 60000,
+    });
     await page.pdf({
       path: filePath,
       ...PDF_CONFIG,
@@ -191,6 +473,15 @@ function loadPuppeteer() {
   }
 }
 
+async function buildResumePDF(resumeData, templateType = DEFAULT_TEMPLATE, options = {}) {
+  if (!resumeData || typeof resumeData !== "object") {
+    throw new Error("Structured resume JSON is required.");
+  }
+
+  const htmlContent = generateStructuredResumeHTML(resumeData, templateType);
+  return generatePDF(htmlContent, options);
+}
+
 async function deleteResumeFile(filePath) {
   if (!filePath) {
     return false;
@@ -206,247 +497,6 @@ async function deleteResumeFile(filePath) {
 
     throw error;
   }
-}
-
-async function buildResumePDF(resumeText, templateType = DEFAULT_TEMPLATE) {
-  const cleanedResumeText = preprocessResumeText(resumeText);
-  const structuredResume = sanitizeStructuredResume(formatResume(cleanedResumeText));
-  const selectedTemplate = normalizeTemplateType(templateType);
-  const htmlContent = renderResumeTemplate(structuredResume, selectedTemplate);
-
-  return generatePDF(htmlContent);
-}
-
-function renderResumeTemplate(resumeData, templateType) {
-  if (templateType === "modern") {
-    return generateModernHTMLResume(resumeData);
-  }
-
-  return generateHTMLResume(resumeData);
-}
-
-function normalizeTemplateType(templateType) {
-  const normalized = String(templateType || DEFAULT_TEMPLATE).toLowerCase();
-  return TEMPLATE_TYPES.has(normalized) ? normalized : DEFAULT_TEMPLATE;
-}
-
-function preprocessResumeText(resumeText) {
-  const cleanedLines = [];
-
-  toLines(resumeText).forEach((line) => {
-    const plainLine = line.replace(/^#+\s*/, "");
-    const normalizedLine = normalizeHeading(plainLine);
-    const previousLine = cleanedLines[cleanedLines.length - 1];
-
-    if (normalizedLine && detectSection(normalizedLine)) {
-      if (previousLine !== plainLine) {
-        cleanedLines.push(plainLine);
-      }
-      return;
-    }
-
-    if (previousLine !== plainLine) {
-      cleanedLines.push(plainLine);
-    }
-  });
-
-  return cleanedLines.join("\n");
-}
-
-function sanitizeStructuredResume(data) {
-  const resume = normalizeResumeData(data);
-
-  return {
-    ...resume,
-    name: cleanSectionText(resume.name),
-    summary: cleanSectionText(resume.summary, "summary"),
-    skills: dedupeList(resume.skills.map((item) => cleanSectionText(item, "skills"))),
-    experience: dedupeList(resume.experience.map((item) => cleanSectionText(item, "experience"))),
-    projects: dedupeList(resume.projects.map((item) => cleanSectionText(item, "projects"))),
-  };
-}
-
-function normalizeResumeData(data) {
-  const resume = data || {};
-
-  return {
-    name: String(resume.name || "").trim(),
-    summary: String(resume.summary || "").trim(),
-    skills: ensureArray(resume.skills),
-    experience: ensureArray(resume.experience),
-    projects: ensureArray(resume.projects),
-    contact: resume.contact || null,
-  };
-}
-
-function createEmptyResume() {
-  return {
-    name: "",
-    summary: "",
-    skills: [],
-    experience: [],
-    projects: [],
-  };
-}
-
-function renderParagraphSection(title, content, theme) {
-  if (!content) {
-    return "";
-  }
-
-  return `<section style="margin-bottom: 26px; padding-top: 2px;">
-      ${renderSectionHeading(title, theme)}
-      <p style="margin: 0; font-size: 14px; color: ${theme.subText};">${escapeHtml(content)}</p>
-    </section>`;
-}
-
-function renderListSection(title, items, theme, options = {}) {
-  const validItems = items.filter(Boolean);
-
-  if (validItems.length === 0) {
-    return "";
-  }
-
-  const indent = options.indent || "20px";
-  const itemSpacing = options.itemSpacing || "10px";
-  const headingSize = options.headingSize || "16px";
-  const listItems = validItems
-    .map((item) => `<li style="margin-bottom: ${itemSpacing};">${escapeHtml(item)}</li>`)
-    .join("");
-
-  return `<section style="margin-bottom: 30px;">
-      ${renderSectionHeading(title, theme, headingSize)}
-      <ul style="margin: 0; padding-left: ${indent}; font-size: 14px; color: ${theme.subText};">${listItems}</ul>
-    </section>`;
-}
-
-function renderSectionHeading(title, theme, size = "16px") {
-  return `<h2 style="margin: 0 0 12px; padding-bottom: 8px; border-bottom: 1px solid ${theme.divider}; font-size: ${size}; font-weight: 700; color: ${theme.heading}; text-transform: uppercase; letter-spacing: 0.06em;">${title}</h2>`;
-}
-
-function wrapHtmlDocument({ title, bodyStyle, content }) {
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${escapeHtml(title)}</title>
-</head>
-<body style="${bodyStyle}">
-  ${content}
-</body>
-</html>`;
-}
-
-function normalizeContact(contact) {
-  if (!contact) {
-    return [];
-  }
-
-  if (Array.isArray(contact)) {
-    return contact.map((item) => String(item).trim()).filter(Boolean);
-  }
-
-  if (typeof contact === "object") {
-    return Object.entries(contact)
-      .filter(([, value]) => value)
-      .map(([key, value]) => `${capitalize(key)}: ${String(value).trim()}`);
-  }
-
-  return [String(contact).trim()].filter(Boolean);
-}
-
-function cleanSectionText(value, currentSection) {
-  let text = cleanBullet(String(value || "").trim());
-
-  if (!text) {
-    return "";
-  }
-
-  const normalized = normalizeHeading(text);
-  const sectionName = detectSection(normalized);
-
-  if (sectionName) {
-    return currentSection && sectionName === currentSection ? "" : text;
-  }
-
-  return text.replace(HEADING_PREFIX_PATTERN, "").trim();
-}
-
-function splitItems(line) {
-  return String(line || "")
-    .split(/[|,]/)
-    .map((item) => cleanBullet(item))
-    .filter(Boolean);
-}
-
-function dedupeList(items) {
-  const seen = new Set();
-
-  return items.filter((item) => {
-    const value = String(item || "").trim();
-
-    if (!value) {
-      return false;
-    }
-
-    const key = value.toLowerCase();
-
-    if (seen.has(key)) {
-      return false;
-    }
-
-    seen.add(key);
-    return true;
-  });
-}
-
-function detectSection(line) {
-  for (const section of SECTION_ORDER) {
-    if (SECTION_KEYWORDS[section].includes(line)) {
-      return section;
-    }
-  }
-
-  return null;
-}
-
-function normalizeHeading(line) {
-  return String(line || "")
-    .toLowerCase()
-    .replace(/[:\s-]+$/, "")
-    .trim();
-}
-
-function cleanBullet(text) {
-  return String(text || "").replace(/^[-*•]\s*/, "").trim();
-}
-
-function ensureArray(value) {
-  return Array.isArray(value) ? value.map((item) => String(item || "").trim()).filter(Boolean) : [];
-}
-
-function toLines(text) {
-  return String(text || "")
-    .replace(/\r/g, "")
-    .split("\n")
-    .map((line) => line.replace(/\s+/g, " ").trim())
-    .filter(Boolean);
-}
-
-function appendSentence(currentValue, nextValue) {
-  const left = String(currentValue || "").trim();
-  const right = String(nextValue || "").trim();
-
-  if (!left) {
-    return right;
-  }
-
-  if (!right) {
-    return left;
-  }
-
-  return `${left} ${right}`;
 }
 
 function getOutputFilePath(fileName) {
@@ -470,11 +520,6 @@ function resolveBrowserExecutablePath() {
   );
 }
 
-function capitalize(value) {
-  const text = String(value || "");
-  return text.charAt(0).toUpperCase() + text.slice(1);
-}
-
 function escapeHtml(value) {
   return String(value || "")
     .replace(/&/g, "&amp;")
@@ -484,13 +529,14 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
+function escapeAttribute(value) {
+  return escapeHtml(value);
+}
+
 module.exports = {
   buildResumePDF,
   deleteResumeFile,
-  formatResume,
-  generateHTMLResume,
-  generateModernHTMLResume,
   generatePDF,
-  preprocessResumeText,
-  sanitizeStructuredResume,
+  generateStructuredResumeHTML,
+  normalizeResumeData,
 };

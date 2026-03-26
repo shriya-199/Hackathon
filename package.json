@@ -1,0 +1,12 @@
+{
+  "name": "resume-pdf-system",
+  "version": "1.0.0",
+  "private": true,
+  "main": "formatResume.js",
+  "scripts": {
+    "test:resume-pdf": "node testResumePDF.js"
+  },
+  "dependencies": {
+    "puppeteer-core": "^24.6.1"
+  }
+}
